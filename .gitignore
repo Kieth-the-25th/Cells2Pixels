@@ -11,6 +11,7 @@ train_legacy/
 
 output_gifs/
 *.gif
+!data/repo/*.gif
 tmp.py
 install_requirements.sh
 scripts/preview_target_names.py

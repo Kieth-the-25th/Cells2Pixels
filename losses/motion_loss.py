@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import torch
 import torchvision.transforms.functional as TF
 import numpy as np
@@ -151,20 +153,22 @@ def show_progress(block_num, block_size, total_size):
     sys.stderr.flush()
 
 
-def _load_MSOEmultiscale_model(model_name="two_stream_dynamic_model", download=False):
-    models_path = "pretrained"
-    assert model_name == 'two_stream_dynamic_model'
-    if not os.path.exists(f'{models_path}/two_stream/{model_name}.pth'):
+def _load_MSOEmultiscale_model(model_name="two_stream_optic_flow", download=False):
+    models_path = Path("./data/pretrained/")
+    assert model_name == 'two_stream_optic_flow'
+    model_file = models_path / "two_stream" / f"{model_name}.pth"
+    if not model_file.exists():
         download = True
 
     if download:
-
-        if os.path.exists(f'{models_path}/two_stream/{model_name}.pth'):
-            os.system(f"rm -rf {models_path}/two_stream")
+        import shutil
         import gdown
         url = 'https://drive.google.com/uc?id=10qoSx0P3TJzf17bUN42x1ZAFNjr-J69f'
-        output = f'{models_path}/two_stream/{model_name}.pth'
-        os.system(f"mkdir -p {models_path}/two_stream/")
+        two_stream_dir = models_path / "two_stream"
+        if two_stream_dir.exists():
+            shutil.rmtree(two_stream_dir)
+        two_stream_dir.mkdir(parents=True, exist_ok=True)
+        output = str(model_file)
         gdown.download(url, output, quiet=False)
 
     model = MSOEmultiscale()
