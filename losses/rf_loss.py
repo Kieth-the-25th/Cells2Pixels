@@ -3,7 +3,6 @@ import os
 from PIL import Image, ImageOps
 import numpy as np
 import torch
-from lpips import LPIPS
 
 from losses.image_loss import imread
 from utils.camera import PerspectiveCamera
@@ -43,6 +42,7 @@ class RadianceFieldLoss(torch.nn.Module):
         # self.target_image_pil = Image.fromarray(np.uint8(self.target_image_np * 255))
 
         if self.lpips_weight > 0:
+            from lpips import LPIPS
             self.lpips_loss_fn = LPIPS(net='vgg').to(self.device)
 
     def load_targets(self, tag="train"):

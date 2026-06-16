@@ -1,6 +1,5 @@
 import torch
 import numpy as np
-import trimesh
 import struct
 from PIL import Image
 
@@ -69,6 +68,8 @@ class VoxelLoss(torch.nn.Module):
 
     @staticmethod
     def create_colored_occupancy(mesh_path, vol_path, res=256):
+        import trimesh
+
         # Load and normalize mesh to fit within unit cube
         mesh = trimesh.load(mesh_path, force="mesh")
         mesh.apply_translation(-mesh.centroid)

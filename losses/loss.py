@@ -1,11 +1,6 @@
 import torch
 import numpy as np
 
-from losses.appearance_loss import AppearanceLoss
-from losses.motion_loss import MotionLoss
-from losses.image_loss import ImageLoss
-from losses.rf_loss import RadianceFieldLoss
-from losses.voxel_loss import VoxelLoss
 
 class Loss(torch.nn.Module):
     def __init__(self, appearance_loss_weight=0.0, overflow_loss_weight=0.0,
@@ -44,6 +39,7 @@ class Loss(torch.nn.Module):
         self.loss_weights = {}
 
         if self.appearance_loss_weight != 0:
+            from losses.appearance_loss import AppearanceLoss
             self.loss_mapper['appearance'] = AppearanceLoss(**self._kwargs_with_device(self.appearance_loss_kwargs))
             self.loss_weights['appearance'] = self.appearance_loss_weight
 
@@ -52,18 +48,22 @@ class Loss(torch.nn.Module):
             self.loss_weights['overflow'] = self.overflow_loss_weight
 
         if self.motion_loss_weight != 0:
+            from losses.motion_loss import MotionLoss
             self.loss_mapper['motion'] = MotionLoss(**self._kwargs_with_device(self.motion_loss_kwargs))
             self.loss_weights['motion'] = self.motion_loss_weight
 
         if self.image_loss_weight != 0:
+            from losses.image_loss import ImageLoss
             self.loss_mapper['image'] = ImageLoss(**self._kwargs_with_device(self.image_loss_kwargs))
             self.loss_weights['image'] = self.image_loss_weight
 
         if self.rf_loss_weight != 0:
+            from losses.rf_loss import RadianceFieldLoss
             self.loss_mapper['rf'] = RadianceFieldLoss(**self._kwargs_with_device(self.rf_loss_kwargs))
             self.loss_weights['rf'] = self.rf_loss_weight
 
         if self.voxel_loss_weight != 0:
+            from losses.voxel_loss import VoxelLoss
             self.loss_mapper['voxel'] = VoxelLoss(**self._kwargs_with_device(self.voxel_loss_kwargs))
             self.loss_weights['voxel'] = self.voxel_loss_weight
 

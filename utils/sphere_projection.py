@@ -3,11 +3,10 @@ import os.path
 from models.siren import Siren
 from utils.mesh import Mesh
 from utils.camera import PerspectiveCamera
-from embreex import rtcore_scene
-from embreex.mesh_construction import TriangleMesh
+
+
 import time
 from PIL import Image
-from pyproj import Proj
 
 from utils.video import VideoWriter
 from tqdm import tqdm
@@ -49,6 +48,9 @@ class SphereProjection:
         :param save_path: Path to save the cached projections
         :param device: PyTorch device to store the data
         """
+        from embreex import rtcore_scene
+        from embreex.mesh_construction import TriangleMesh
+        
         assert mesh.is_icosphere
         with torch.no_grad():
             self.device = device
@@ -76,6 +78,8 @@ class SphereProjection:
 
     @torch.no_grad()
     def _cache_views(self):
+        from pyproj import Proj
+
         config_hash = self.config_hash
         if os.path.exists(os.path.join(self.save_path, f"{config_hash}.pt")):
             print(f"Loading cached projections from {self.save_path}/{config_hash}.pt")
