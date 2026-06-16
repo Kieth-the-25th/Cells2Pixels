@@ -1,3 +1,5 @@
+import copy
+
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -7,10 +9,13 @@ from models.meshnca import MeshNCA
 from models.siren import Siren
 from training.common import (
     TestOptions,
+    autocast_context,
     device_config,
     load_checkpoint_pair,
     load_graft_if_configured,
+    make_grad_scaler,
     normalize_model_grads,
+    precision_from_config,
     save_checkpoint,
     set_seed,
 )
@@ -25,21 +30,24 @@ from utils.video import VideoWriter
 
 class MeshNCATask(BaseTask):
     def _build(self, load: bool = False):
+        precision = precision_from_config(self.config)
         meshnca_kwargs = {
             key: value
             for key, value in self.config["meshnca"].items()
             if key != "graft_initialization"
         }
-        model = MeshNCA(**device_config(meshnca_kwargs, self.device)).to(self.device)
+        meshnca_kwargs = device_config(meshnca_kwargs, self.device)
+        meshnca_kwargs["precision"] = precision
+        model = MeshNCA(**meshnca_kwargs).to(self.device)
         total_channels, output_channels = process_output_channels(self.config["num_channels"])
         siren = Siren(in_features=model.channels, coord_dim=3, out_features=total_channels, **self.config["siren"]).to(self.device)
         if load:
             load_checkpoint_pair(self.config, model, siren, device=self.device)
-        return model, siren, output_channels
+        return model, siren, output_channels, precision
 
     def train(self) -> None:
         set_seed(self.config.get("seed", 42))
-        model, siren, output_channels = self._build()
+        model, siren, output_channels, precision = self._build()
         self._log_counts(model, siren, "MeshNCA")
         load_graft_if_configured(self.config, "meshnca", model, siren, self.device)
         with torch.no_grad():
@@ -56,6 +64,7 @@ class MeshNCATask(BaseTask):
             projection = SphereProjection(mesh=icosphere, **device_config(train_cfg["projection"], self.device))
 
         optimizer, scheduler = self._optimizer(list(model.parameters()) + list(siren.parameters()))
+        scaler = make_grad_scaler(self.device, precision)
         for epoch in tqdm(range(train_cfg["epochs"]), desc="MeshNCA"):
             with torch.no_grad():
                 batch_idx = np.random.choice(len(pool), train_cfg["batch_size"], replace=False)
@@ -63,25 +72,35 @@ class MeshNCATask(BaseTask):
                 if epoch % train_cfg["inject_seed_interval"] == 0:
                     x[:1] = model.seed(1, icosphere.Nv)
             step_n = np.random.randint(*train_cfg["step_range"])
-            for _ in range(step_n):
-                x = model(x, icosphere, None)
+            with autocast_context(self.device, precision):
+                for _ in range(step_n):
+                    x = model(x, icosphere, None)
+            x_render = x.to(torch.float32)
             camera = PerspectiveCamera.generate_random_view_cameras(**camera_config)
-            rendered = renderer.render(icosphere, x, camera, projection, siren)
-            rendered = torch.flatten(rendered, start_dim=0, end_dim=1).permute(0, 3, 1, 2)
+            with autocast_context(self.device, precision):
+                rendered = renderer.render(icosphere, x_render, camera, projection, siren)
+            rendered = torch.flatten(rendered, start_dim=0, end_dim=1).permute(0, 3, 1, 2).to(torch.float32)
             input_dict = {"rendered_images": rendered, "nca_state": x}
             return_summary = epoch % train_cfg["summary_interval"] == 0
             loss, loss_log, summary = loss_fn(input_dict, return_summary=return_summary)
             if return_summary:
                 with torch.no_grad():
                     test_camera = PerspectiveCamera.generate_random_view_cameras(1, distance=2.5, device=self.device, k=1.0)
-                    test_image = test_renderer.render(icosphere, x[:1], test_camera, None, siren, target_channels=output_channels)
+                    test_image = test_renderer.render(icosphere, x_render[:1], test_camera, None, siren, target_channels=output_channels)
                     self._save_logged_image("pbr_output", Renderer3D.to_pil(test_image), epoch)
                     if "appearance-images" in summary:
                         self._save_logged_image("rendered_images", summary["appearance-images"], epoch)
-            loss.backward()
+            if precision == torch.float16:
+                scaler.scale(loss).backward()
+            else:
+                loss.backward()
             with torch.no_grad():
                 normalize_model_grads(model)
-                optimizer.step()
+                if precision == torch.float16:
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    optimizer.step()
                 optimizer.zero_grad()
                 scheduler.step()
                 pool[batch_idx] = x
@@ -90,7 +109,10 @@ class MeshNCATask(BaseTask):
 
     @torch.no_grad()
     def test(self, options: TestOptions) -> None:
-        model, siren, output_channels = self._build(load=True)
+        test_config = copy.deepcopy(self.config)
+        test_config["precision"] = "float32"
+        self.config = test_config
+        model, siren, output_channels, _ = self._build(load=True)
         output_dir = self._output_dir(options)
         mesh_config = device_config(self.config["train"].get("test_mesh", {}), self.device)
         if mesh_config.get("obj_path"):

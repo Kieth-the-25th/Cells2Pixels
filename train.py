@@ -16,7 +16,7 @@ def parse_args():
 
     parser.add_argument("--test", action="store_true", help="Run the task's common test pass after training.")
     parser.add_argument("--test-output-dir", type=str, default="outputs", help="Directory for test images/videos.")
-    parser.add_argument("--test-steps", type=int, default=512, help="NCA rollout steps before the test image.")
+    parser.add_argument("--test-steps", type=int, default=1024, help="NCA rollout steps before the test image.")
     parser.add_argument("--test-video-frames", type=int, default=240, help="Number of test video frames.")
     parser.add_argument("--test-fps", type=float, default=30.0, help="Test video frames per second.")
     parser.add_argument("--no-test-image", action="store_true", help="Do not save the test image.")

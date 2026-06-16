@@ -1,3 +1,5 @@
+import copy
+
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -7,10 +9,13 @@ from models.nca2d import GrowingNCA
 from models.siren import Siren
 from training.common import (
     TestOptions,
+    autocast_context,
     device_config,
     load_checkpoint_pair,
     load_graft_if_configured,
+    make_grad_scaler,
     normalize_model_grads,
+    precision_from_config,
     save_checkpoint,
     set_seed,
 )
@@ -21,7 +26,9 @@ from utils.video import VideoWriter
 
 class Growing2DTask(BaseTask):
     def _build(self, load: bool = False):
+        precision = precision_from_config(self.config)
         nca_kwargs = device_config(self.config["nca"]["nca_kwargs"], self.device)
+        nca_kwargs["precision"] = precision
         model = GrowingNCA(**nca_kwargs).to(self.device)
         nca_output_dim = model.channels
         if self.config["nca"]["output_type"] == "z":
@@ -29,7 +36,7 @@ class Growing2DTask(BaseTask):
         siren = Siren(in_features=nca_output_dim, coord_dim=2, out_features=4, **self.config["siren"]).to(self.device)
         if load:
             load_checkpoint_pair(self.config, model, siren, device=self.device)
-        return model, siren
+        return model, siren, precision
 
     def _loss_renderer_grid(self):
         loss_fn = Loss(**self.config["loss"])
@@ -40,7 +47,7 @@ class Growing2DTask(BaseTask):
 
     def train(self) -> None:
         set_seed(self.config.get("seed", 43))
-        model, siren = self._build()
+        model, siren, precision = self._build()
         self._log_counts(model, siren, "GrowingNCA")
         rep_start = load_graft_if_configured(self.config, "nca", model, siren, self.device)
         with torch.no_grad():
@@ -52,6 +59,7 @@ class Growing2DTask(BaseTask):
                 pool = model.seed(train_cfg["pool_size"], grid_size[0], grid_size[1])
 
             optimizer, scheduler = self._optimizer(list(model.parameters()) + list(siren.parameters()))
+            scaler = make_grad_scaler(self.device, precision)
             for epoch in tqdm(range(train_cfg["epochs"]), desc=f"Repetition {repetition + 1}/{train_cfg['num_repetitions']}"):
                 log_step = epoch + repetition * train_cfg["epochs"]
                 with torch.no_grad():
@@ -61,13 +69,15 @@ class Growing2DTask(BaseTask):
                         x[:1] = model.seed(1, grid_size[0], grid_size[1])
 
                 step_n = np.random.randint(*train_cfg["step_range"])
-                for _ in range(step_n):
-                    x, z = model(x)
+                with autocast_context(self.device, precision):
+                    for _ in range(step_n):
+                        x, z = model(x)
 
-                x_render = x if self.config["nca"]["output_type"] == "s" else z
-                rendered = renderer.render(x_render.permute(0, 2, 3, 1), siren, None, fs_shader="vanilla")
-                rendered = rendered.permute(0, 3, 1, 2)
-                x_up = torch.nn.functional.interpolate(x, scale_factor=renderer.scale_factor, mode="bilinear")
+                x_render = (x if self.config["nca"]["output_type"] == "s" else z).to(torch.float32)
+                with autocast_context(self.device, precision):
+                    rendered = renderer.render(x_render.permute(0, 2, 3, 1), siren, None, fs_shader="vanilla")
+                rendered = rendered.permute(0, 3, 1, 2).to(torch.float32)
+                x_up = torch.nn.functional.interpolate(x.to(torch.float32), scale_factor=renderer.scale_factor, mode="bilinear")
                 living_mask = model.get_living_mask(x_up).float()
                 rendered = rendered * living_mask
                 input_dict = {
@@ -81,10 +91,17 @@ class Growing2DTask(BaseTask):
                 if return_summary and "image-images" in summary:
                     self._save_logged_image("nca_output", summary["image-images"], log_step)
 
-                loss.backward()
+                if precision == torch.float16:
+                    scaler.scale(loss).backward()
+                else:
+                    loss.backward()
                 with torch.no_grad():
                     normalize_model_grads(model)
-                    optimizer.step()
+                    if precision == torch.float16:
+                        scaler.step(optimizer)
+                        scaler.update()
+                    else:
+                        optimizer.step()
                     optimizer.zero_grad()
                     scheduler.step()
                     pool[batch_idx] = x
@@ -98,7 +115,10 @@ class Growing2DTask(BaseTask):
 
     @torch.no_grad()
     def test(self, options: TestOptions) -> None:
-        model, siren = self._build(load=True)
+        test_config = copy.deepcopy(self.config)
+        test_config["precision"] = "float32"
+        self.config = test_config
+        model, siren, _ = self._build(load=True)
         loss_fn, renderer, grid_size = self._loss_renderer_grid()
         output_dir = self._output_dir(options)
         x = model.seed(1, grid_size[0], grid_size[1])

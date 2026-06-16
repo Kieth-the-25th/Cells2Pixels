@@ -1,6 +1,7 @@
 experiment_name: "MeshNCA"
 task: "meshnca"
 device: "cuda:0"
+precision: "float16" # "float16" or "float32"
 
 meshnca:
   channels: 16 # Number of nca channels

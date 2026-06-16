@@ -96,12 +96,18 @@ class Texture3DTask(BaseTask):
                 rgb_sampler_kwargs.update({"mode": "stride", "stride": 1})
                 of_sampler_kwargs.update({"mode": "stride", "stride": 8})
 
-                rgb, depth, opacity, alpha, sampler = renderer.render(x_render, camera, siren, sampler_kwargs=rgb_sampler_kwargs)
+                with autocast_context(self.device, precision):
+                    rgb, depth, opacity, alpha, sampler = renderer.render(x_render, camera, siren, sampler_kwargs=rgb_sampler_kwargs)
+                rgb = rgb.to(torch.float32)
                 rgb = rgb.view(-1, rgb.shape[2], rgb.shape[3], rgb.shape[4])
                 with torch.no_grad():
-                    of_before, _, _, _, _ = renderer.render(x0_render, camera, siren, sampler_kwargs=of_sampler_kwargs, num_samples=64)
+                    with autocast_context(self.device, precision):
+                        of_before, _, _, _, _ = renderer.render(x0_render, camera, siren, sampler_kwargs=of_sampler_kwargs, num_samples=64)
+                    of_before = of_before.to(torch.float32)
                     of_before = of_before.view(-1, of_before.shape[2], of_before.shape[3], of_before.shape[4])
-                of_after, _, _, _, _ = renderer.render(x_render, camera, siren, sampler_kwargs=of_sampler_kwargs, num_samples=64)
+                with autocast_context(self.device, precision):
+                    of_after, _, _, _, _ = renderer.render(x_render, camera, siren, sampler_kwargs=of_sampler_kwargs, num_samples=64)
+                of_after = of_after.to(torch.float32)
                 of_after = of_after.view(-1, of_after.shape[2], of_after.shape[3], of_after.shape[4])
 
                 input_dict = {

@@ -33,6 +33,7 @@ class NCA(torch.nn.Module):
     def __init__(self, channels, fc_dim,
                  padding='circular', perception_kernels=4,
                  cond_chn=0, update_prob=0.5, device=None,
+                 precision=torch.float32,
                  ):
         """
         channels: Number of channels in the cell state
@@ -49,6 +50,7 @@ class NCA(torch.nn.Module):
         super(NCA, self).__init__()
         self.channels, self.fc_dim, self.padding, self.perception_kernels = channels, fc_dim, padding, perception_kernels
         self.cond_chn, self.update_prob, self.device = cond_chn, update_prob, device
+        self.precision = precision
 
         self.w1 = torch.nn.Conv2d(channels * perception_kernels + cond_chn, fc_dim, 1, bias=True, device=device)
         self.w2 = torch.nn.Conv2d(fc_dim, channels, 1, bias=False, device=device)
@@ -57,9 +59,9 @@ class NCA(torch.nn.Module):
         torch.nn.init.zeros_(self.w2.weight)
 
         with torch.no_grad():
-            ident = torch.tensor([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]], device=device)
-            sobel_x = torch.tensor([[-1.0, 0.0, 1.0], [-2.0, 0.0, 2.0], [-1.0, 0.0, 1.0]], device=device)
-            lap_x = torch.tensor([[0.5, 0.0, 0.5], [2.0, -6.0, 2.0], [0.5, 0.0, 0.5]], device=device)
+            ident = torch.tensor([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]], device=device, dtype=precision)
+            sobel_x = torch.tensor([[-1.0, 0.0, 1.0], [-2.0, 0.0, 2.0], [-1.0, 0.0, 1.0]], device=device, dtype=precision)
+            lap_x = torch.tensor([[0.5, 0.0, 0.5], [2.0, -6.0, 2.0], [0.5, 0.0, 0.5]], device=device, dtype=precision)
 
             self.filters = torch.stack([ident, sobel_x, sobel_x.T, lap_x, lap_x.T])
             self.train_filters = torch.stack([ident, sobel_x, sobel_x.T, lap_x + lap_x.T])
@@ -102,7 +104,7 @@ class NCA(torch.nn.Module):
         M = 1.0
         if self.update_prob < 1.0:
             b, _, h, w = s.shape
-            M = (torch.rand(b, 1, h, w, device=s.device) + self.update_prob).floor()
+            M = (torch.rand(b, 1, h, w, device=s.device, dtype=self.precision) + self.update_prob).floor()
 
         return s + delta_s * M * dt, z
 
@@ -111,7 +113,7 @@ class NCA(torch.nn.Module):
         M = 1.0
         if self.update_prob < 1.0:
             b, _, h, w = s.shape
-            M = (torch.rand(b, 1, h, w, device=s.device) + self.update_prob).floor()
+            M = (torch.rand(b, 1, h, w, device=s.device, dtype=self.precision) + self.update_prob).floor()
 
         k1, z1 = self.adaptation(s, dx, dy)
         k2, z2 = self.adaptation(s + k1 * 0.5 * M, dx, dy)
@@ -139,11 +141,12 @@ class NCA(torch.nn.Module):
 
     def seed(self, n, h=128, w=128):
         """Starting cell state"""
-        return torch.zeros(n, self.channels, h, w, device=self.device)
+        return torch.zeros(n, self.channels, h, w, device=self.device, dtype=self.precision)
 
     def to(self, *args, **kwargs):
         super().to(*args, **kwargs)
         self.filters = self.filters.to(*args, **kwargs)
+        self.train_filters = self.train_filters.to(*args, **kwargs)
         self.device = self.w1.weight.device
         return self
 
@@ -162,10 +165,10 @@ class NoiseNCA(NCA):
         """
         assert "update_prob" not in kwargs, "The update probability is fixed to 1.0 for NoiseNCA."
         super(NoiseNCA, self).__init__(channels, fc_dim, update_prob=1.0, **kwargs)
-        self.register_buffer("noise_level", torch.tensor([noise_level], device=self.device))
+        self.register_buffer("noise_level", torch.tensor([noise_level], device=self.device, dtype=self.precision))
 
     def seed(self, n, h=128, w=128):
-        return (torch.rand(n, self.channels, h, w, device=self.device) - 0.5) * self.noise_level
+        return (torch.rand(n, self.channels, h, w, device=self.device, dtype=self.precision) - 0.5) * self.noise_level
 
 
 class PENCA(NCA):
@@ -178,7 +181,7 @@ class PENCA(NCA):
         assert "cond_chn" not in kwargs, "The number of conditional channels is fixed to 2 for PENCA."
         assert "update_prob" not in kwargs, "The update probability is fixed to 1.0 for PENCA."
         super(PENCA, self).__init__(channels, fc_dim, cond_chn=2, update_prob=0.5, padding='replicate', **kwargs)
-        self.register_buffer("noise_level", torch.tensor([noise_level], device=self.device))
+        self.register_buffer("noise_level", torch.tensor([noise_level], device=self.device, dtype=self.precision))
 
         self.cached_grid = None
         self.last_shape = None
@@ -204,7 +207,7 @@ class PENCA(NCA):
         return delta_s, z
 
     def seed(self, n, h=128, w=128):
-        return (torch.rand(n, self.channels, h, w, device=self.device) - 0.5) * self.noise_level
+        return (torch.rand(n, self.channels, h, w, device=self.device, dtype=self.precision) - 0.5) * self.noise_level
 
 
 class GrowingNCA(NCA):
@@ -228,7 +231,7 @@ class GrowingNCA(NCA):
         new_s, z = super().forward(s, dx, dy, dt, integrator)
         post_life_mask = GrowingNCA.get_living_mask(new_s)
 
-        new_s = new_s * torch.logical_and(pre_life_mask, post_life_mask).float()
+        new_s = new_s * torch.logical_and(pre_life_mask, post_life_mask).to(self.precision)
         return new_s, z
 
     @staticmethod
@@ -238,7 +241,7 @@ class GrowingNCA(NCA):
         return torch.nn.functional.max_pool2d(alpha, K, stride=1, padding=K // 2) > 0.1
 
     def seed(self, n, h=128, w=128):
-        s = torch.zeros(n, self.channels, h, w, device=self.device)
+        s = torch.zeros(n, self.channels, h, w, device=self.device, dtype=self.precision)
         s[:, 3:, h // 2, w // 2] = 1.0
         return s
 

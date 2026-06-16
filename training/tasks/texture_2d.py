@@ -1,3 +1,5 @@
+import copy
+
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -7,10 +9,13 @@ from models.nca2d import GrowingNCA, NCA, NoiseNCA, PENCA
 from models.siren import Siren
 from training.common import (
     TestOptions,
+    autocast_context,
     device_config,
     load_checkpoint_pair,
     load_graft_if_configured,
+    make_grad_scaler,
     normalize_model_grads,
+    precision_from_config,
     save_checkpoint,
     set_seed,
 )
@@ -30,7 +35,9 @@ NCA_2D_TYPES = {
 
 class Texture2DTask(BaseTask):
     def _build(self, load: bool = False):
+        precision = precision_from_config(self.config)
         nca_kwargs = device_config(self.config["nca"]["nca_kwargs"], self.device)
+        nca_kwargs["precision"] = precision
         nca_type = self.config["nca"]["type"]
         model = NCA_2D_TYPES[nca_type](**nca_kwargs).to(self.device)
         total_channels, output_channels = process_output_channels(self.config["num_channels"])
@@ -41,7 +48,7 @@ class Texture2DTask(BaseTask):
         siren = Siren(in_features=nca_output_dim, coord_dim=2, out_features=total_channels, **self.config["siren"]).to(self.device)
         if load:
             load_checkpoint_pair(self.config, model, siren, device=self.device)
-        return model, siren, output_channels
+        return model, siren, output_channels, precision
 
     def _loss_renderer_grid(self, output_channels):
         total_channels = sum(len(v) for v in output_channels.values())
@@ -53,7 +60,7 @@ class Texture2DTask(BaseTask):
 
     def train(self) -> None:
         set_seed(self.config.get("seed", 42))
-        model, siren, output_channels = self._build()
+        model, siren, output_channels, precision = self._build()
         self._log_counts(model, siren, self.config["nca"]["type"])
         rep_start = load_graft_if_configured(self.config, "nca", model, siren, self.device)
         with torch.no_grad():
@@ -65,6 +72,7 @@ class Texture2DTask(BaseTask):
             with torch.no_grad():
                 pool = model.seed(train_cfg["pool_size"], grid_size[0], grid_size[1])
             optimizer, scheduler = self._optimizer(list(model.parameters()) + list(siren.parameters()))
+            scaler = make_grad_scaler(self.device, precision)
 
             for epoch in tqdm(range(train_cfg["epochs"]), desc=f"Repetition {repetition + 1}/{num_reps}"):
                 log_step = epoch + repetition * train_cfg["epochs"]
@@ -76,18 +84,20 @@ class Texture2DTask(BaseTask):
 
                 step_n = np.random.randint(*train_cfg["step_range"])
                 x0 = x
-                for _ in range(step_n):
-                    x, z = model(x)
-                x_render = x if self.config["nca"].get("output_type", "s") == "s" else z
-                rendered = renderer.render(x_render.permute(0, 2, 3, 1), siren, None, fs_shader="vanilla")
-                rendered = rendered.permute(0, 3, 1, 2)
+                with autocast_context(self.device, precision):
+                    for _ in range(step_n):
+                        x, z = model(x)
+                x_render = (x if self.config["nca"].get("output_type", "s") == "s" else z).to(torch.float32)
+                with autocast_context(self.device, precision):
+                    rendered = renderer.render(x_render.permute(0, 2, 3, 1), siren, None, fs_shader="vanilla")
+                rendered = rendered.permute(0, 3, 1, 2).to(torch.float32)
 
                 of_channels = np.random.permutation(model.channels)[:3]
                 input_dict = {
                     "rendered_images": rendered,
                     "nca_state": x,
-                    "image_before": (x0[:, of_channels] + 1.0) / 2.0,
-                    "image_after": (x[:, of_channels] + 1.0) / 2.0,
+                    "image_before": ((x0[:, of_channels] + 1.0) / 2.0).to(torch.float32),
+                    "image_after": ((x[:, of_channels] + 1.0) / 2.0).to(torch.float32),
                     "step_n": step_n,
                 }
                 return_summary = log_step % train_cfg["summary_interval"] == 0
@@ -110,10 +120,17 @@ class Texture2DTask(BaseTask):
                     if log_step == 0 and "motion-target_VF" in summary:
                         self._save_logged_image("target_vector_field", summary["motion-target_VF"], log_step)
 
-                loss.backward()
+                if precision == torch.float16:
+                    scaler.scale(loss).backward()
+                else:
+                    loss.backward()
                 with torch.no_grad():
                     normalize_model_grads(model)
-                    optimizer.step()
+                    if precision == torch.float16:
+                        scaler.step(optimizer)
+                        scaler.update()
+                    else:
+                        optimizer.step()
                     optimizer.zero_grad()
                     scheduler.step()
                     pool[batch_idx] = x
@@ -126,7 +143,10 @@ class Texture2DTask(BaseTask):
 
     @torch.no_grad()
     def test(self, options: TestOptions) -> None:
-        model, siren, output_channels = self._build(load=True)
+        test_config = copy.deepcopy(self.config)
+        test_config["precision"] = "float32"
+        self.config = test_config
+        model, siren, output_channels, _ = self._build(load=True)
         _, renderer, grid_size = self._loss_renderer_grid(output_channels)
         output_dir = self._output_dir(options)
         x = model.seed(1, grid_size[0], grid_size[1])
@@ -147,7 +167,11 @@ class Texture2DTask(BaseTask):
             x = model.seed(1, grid_size[0], grid_size[1])
             with VideoWriter(str(output_dir / f"{self.config['experiment_name']}_test.mp4"), fps=options.fps) as video:
                 for i in tqdm(range(options.video_frames), desc="Test video"):
-                    step_n = 1 if i < options.video_frames // 3 else 4
+                    step_n = 1
+                    if i > step_n * 2 // 3:
+                        step_n = 16
+                    elif i > step_n * 1 // 3:
+                        step_n = 4
                     image = render_frame(x)
                     video.add(image)
                     for _ in range(step_n):

@@ -23,13 +23,14 @@ class MeshNCA(MessagePassing):
     def __init__(self, channels=16, fc_dim=128,
                  sh_order=1, aggregation='sum',
                  stochastic_update=True, seed_mode='zeros',
-                 condition=None, device='cuda:0'):
+                 condition=None, device='cuda:0', precision=torch.float32):
         super(MeshNCA, self).__init__(aggr=aggregation)
         self.channels = channels
         self.fc_dim = fc_dim
         self.sh_order = sh_order
         self.stochastic_update = stochastic_update
         self.aggregation = aggregation
+        self.precision = precision
 
         assert seed_mode in ['zeros', 'random']
         self.seed_mode = seed_mode
@@ -120,7 +121,7 @@ class MeshNCA(MessagePassing):
 
         # Concatenate the vertex positions to the features for the perception stage of the update rule
         # Per-vertex perception vector z [batch_size * num_vertices, channels * num_sh]
-        z = self.propagate(edge_index, x=torch.cat([x, vertex_positions], dim=1))
+        z = self.propagate(edge_index, x=torch.cat([x, vertex_positions.to(x.dtype)], dim=1))
         if self.aggregation == "mean":
             z = z * 6.0  # Scale the mean aggregation to match the sum aggregation. Valence ~= 6
 
@@ -151,16 +152,16 @@ class MeshNCA(MessagePassing):
         if self.stochastic_update:
             update_rate = 0.5
             # Per-vertex random binary mask
-            update_mask = (torch.rand(batch_size, num_vertices, 1, device=delta_x.device) + update_rate).floor()
+            update_mask = (torch.rand(batch_size, num_vertices, 1, device=delta_x.device, dtype=delta_x.dtype) + update_rate).floor()
             delta_x = delta_x * update_mask
 
         return x + delta_x
 
     def seed(self, pool_size: int, num_vertices: int):
         if self.seed_mode == 'zeros':
-            return torch.zeros(pool_size, num_vertices, self.channels, device=self.device)
+            return torch.zeros(pool_size, num_vertices, self.channels, device=self.device, dtype=self.precision)
         elif self.seed_mode == 'random':
-            return torch.rand(pool_size, num_vertices, self.channels, device=self.device) * 0.1
+            return torch.rand(pool_size, num_vertices, self.channels, device=self.device, dtype=self.precision) * 0.1
 
     def __repr__(self):
         return f"MeshNCA(channels={self.channels}, fc_dim={self.fc_dim}, " \

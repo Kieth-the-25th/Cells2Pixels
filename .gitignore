@@ -15,9 +15,9 @@ output_gifs/
 tmp.py
 install_requirements.sh
 scripts/preview_target_names.py
-experiments/
 
 # Outputs and Data
+experiments/
 output/
 outputs/
 results*

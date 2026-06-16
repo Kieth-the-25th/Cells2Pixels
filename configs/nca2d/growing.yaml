@@ -1,6 +1,7 @@
 experiment_name: "GrowingNCA"
 task: "growing_2d"
 device: "cuda:0"
+precision: "float16" # "float16" or "float32"
 
 nca:
   type: "GrowingNCA" # Type of the NCA. Options: "NCA", "PENCA", "NoiseNCA"

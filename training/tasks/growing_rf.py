@@ -91,7 +91,11 @@ class GrowingRFTask(BaseTask):
                 camera, view_idx = loss_fn["rf"].get_random_views(train_cfg["num_views"], mode="train")
                 l1l2_sampler_kwargs = copy.copy(self.config["renderer"]["sampler_kwargs"])
                 l1l2_sampler_kwargs["mode"] = "stride"
-                rgb, _, opacity, alpha, sampler = renderer.render(x_render, camera, siren, sampler_kwargs=l1l2_sampler_kwargs)
+                with autocast_context(self.device, precision):
+                    rgb, _, opacity, alpha, sampler = renderer.render(x_render, camera, siren, sampler_kwargs=l1l2_sampler_kwargs)
+                rgb = rgb.to(torch.float32)
+                opacity = opacity.to(torch.float32)
+                alpha = alpha.to(torch.float32)
                 generated = torch.cat([rgb, opacity], dim=2)
                 input_dict = {
                     "generated_images_l1l2": generated,
