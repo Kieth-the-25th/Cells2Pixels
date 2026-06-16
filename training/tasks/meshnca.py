@@ -57,7 +57,7 @@ class MeshNCATask(BaseTask):
             total_channels = sum(len(v) for v in output_channels.values())
             self.config["loss"]["appearance_loss_kwargs"]["total_channels"] = total_channels
             self.config["loss"]["appearance_loss_kwargs"]["output_channels"] = output_channels
-            loss_fn = Loss(**self.config["loss"])
+            loss_fn = Loss(**device_config(self.config["loss"], self.device))
             renderer = Renderer3D(**self.config["renderer"], precision=precision)
             test_renderer = Renderer3D(**self.config["test_renderer"], precision=precision)
             camera_config = device_config(train_cfg["camera"], self.device)

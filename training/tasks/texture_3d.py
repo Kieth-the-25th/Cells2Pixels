@@ -52,7 +52,7 @@ class Texture3DTask(BaseTask):
         self.config["loss"]["appearance_loss_kwargs"]["total_channels"] = total_channels
         self.config["loss"]["appearance_loss_kwargs"]["output_channels"] = output_channels
         with torch.no_grad():
-            loss_fn = Loss(**self.config["loss"])
+            loss_fn = Loss(**device_config(self.config["loss"], self.device))
             renderer = RendererRF(**self.config["renderer"], precision=precision)
             grid_size = self.config["nca"]["grid_size"]
 

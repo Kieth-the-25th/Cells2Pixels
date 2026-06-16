@@ -12,9 +12,11 @@ class Loss(torch.nn.Module):
                  clip_loss_weight=0.0, motion_loss_weight=0.0,
                  image_loss_weight=0.0, rf_loss_weight=0.0, voxel_loss_weight=0.0,
                  appearance_loss_kwargs=None, motion_loss_kwargs=None,
-                 image_loss_kwargs=None, rf_loss_kwargs=None, voxel_loss_kwargs=None):
+                 image_loss_kwargs=None, rf_loss_kwargs=None, voxel_loss_kwargs=None,
+                 device='cuda:0'):
         super(Loss, self).__init__()
 
+        self.device = device
         self.appearance_loss_weight = appearance_loss_weight
         self.clip_loss_weight = clip_loss_weight
         self.motion_loss_weight = motion_loss_weight
@@ -32,12 +34,17 @@ class Loss(torch.nn.Module):
 
         self._create_losses()
 
+    def _kwargs_with_device(self, kwargs):
+        kwargs = dict(kwargs)
+        kwargs["device"] = self.device
+        return kwargs
+
     def _create_losses(self):
         self.loss_mapper = {}
         self.loss_weights = {}
 
         if self.appearance_loss_weight != 0:
-            self.loss_mapper['appearance'] = AppearanceLoss(**self.appearance_loss_kwargs)
+            self.loss_mapper['appearance'] = AppearanceLoss(**self._kwargs_with_device(self.appearance_loss_kwargs))
             self.loss_weights['appearance'] = self.appearance_loss_weight
 
         if self.overflow_loss_weight != 0:
@@ -45,19 +52,19 @@ class Loss(torch.nn.Module):
             self.loss_weights['overflow'] = self.overflow_loss_weight
 
         if self.motion_loss_weight != 0:
-            self.loss_mapper['motion'] = MotionLoss(**self.motion_loss_kwargs)
+            self.loss_mapper['motion'] = MotionLoss(**self._kwargs_with_device(self.motion_loss_kwargs))
             self.loss_weights['motion'] = self.motion_loss_weight
 
         if self.image_loss_weight != 0:
-            self.loss_mapper['image'] = ImageLoss(**self.image_loss_kwargs)
+            self.loss_mapper['image'] = ImageLoss(**self._kwargs_with_device(self.image_loss_kwargs))
             self.loss_weights['image'] = self.image_loss_weight
 
         if self.rf_loss_weight != 0:
-            self.loss_mapper['rf'] = RadianceFieldLoss(**self.rf_loss_kwargs)
+            self.loss_mapper['rf'] = RadianceFieldLoss(**self._kwargs_with_device(self.rf_loss_kwargs))
             self.loss_weights['rf'] = self.rf_loss_weight
 
         if self.voxel_loss_weight != 0:
-            self.loss_mapper['voxel'] = VoxelLoss(**self.voxel_loss_kwargs)
+            self.loss_mapper['voxel'] = VoxelLoss(**self._kwargs_with_device(self.voxel_loss_kwargs))
             self.loss_weights['voxel'] = self.voxel_loss_weight
 
         self.appearance_loss_history = []

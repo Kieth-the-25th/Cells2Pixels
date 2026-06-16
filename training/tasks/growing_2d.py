@@ -40,7 +40,7 @@ class Growing2DTask(BaseTask):
         return model, siren, precision
 
     def _loss_renderer_grid(self):
-        loss_fn = Loss(**self.config["loss"])
+        loss_fn = Loss(**device_config(self.config["loss"], self.device))
         renderer = Renderer2D(**self.config["renderer"], precision=precision_from_config(self.config))
         grid_size = loss_fn.loss_mapper["image"].grid_size
         grid_size = (grid_size[0] // renderer.scale_factor, grid_size[1] // renderer.scale_factor)

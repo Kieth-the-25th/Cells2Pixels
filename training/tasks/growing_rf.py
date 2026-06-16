@@ -50,7 +50,7 @@ class GrowingRFTask(BaseTask):
         self._log_counts(model, siren, "GrowingVNCA")
         load_graft_if_configured(self.config, "nca", model, siren, self.device)
         with torch.no_grad():
-            loss_fn = Loss(**self.config["loss"])
+            loss_fn = Loss(**device_config(self.config["loss"], self.device))
             renderer = RendererRF(**self.config["renderer"], precision=precision)
             grid_size = self.config["nca"]["grid_size"]
 

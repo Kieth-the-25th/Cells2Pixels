@@ -3,7 +3,6 @@ import numpy as np
 import torch
 import requests
 import io
-from lpips import LPIPS
 import torchvision.transforms.functional as TF
 
 
@@ -86,6 +85,7 @@ class ImageLoss(torch.nn.Module):
             self.target_image[:, :3] *= self.target_image[:, 3:4]
 
         if self.lpips_weight > 0:
+            from lpips import LPIPS
             self.lpips_loss_fn = LPIPS(net='vgg', verbose=False).to(self.device)
 
     @staticmethod

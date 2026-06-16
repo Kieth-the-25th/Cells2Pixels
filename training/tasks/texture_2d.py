@@ -54,7 +54,7 @@ class Texture2DTask(BaseTask):
         total_channels = sum(len(v) for v in output_channels.values())
         self.config["loss"]["appearance_loss_kwargs"]["total_channels"] = total_channels
         self.config["loss"]["appearance_loss_kwargs"]["output_channels"] = output_channels
-        loss_fn = Loss(**self.config["loss"])
+        loss_fn = Loss(**device_config(self.config["loss"], self.device))
         renderer = Renderer2D(**self.config["renderer"], precision=precision_from_config(self.config))
         return loss_fn, renderer, tuple(self.config["train"]["nca_grid_size"])
 

@@ -62,7 +62,7 @@ class GrowingVoxelTask(BaseTask):
         self._log_counts(model, siren, "GrowingVNCA")
         load_graft_if_configured(self.config, "nca", model, siren, self.device)
         with torch.no_grad():
-            loss_fn = Loss(**self.config["loss"])
+            loss_fn = Loss(**device_config(self.config["loss"], self.device))
             grid_size = loss_fn.loss_mapper["voxel"].grid_size
             scale_factor = self.config["scale_factor"]
             nca_grid_size = [s // scale_factor for s in grid_size]
@@ -112,7 +112,7 @@ class GrowingVoxelTask(BaseTask):
     @torch.no_grad()
     def test(self, options: TestOptions) -> None:
         model, siren, precision = self._build(load=True)
-        loss_fn = Loss(**self.config["loss"])
+        loss_fn = Loss(**device_config(self.config["loss"], self.device))
         grid_size = loss_fn.loss_mapper["voxel"].grid_size
         scale_factor = self.config["scale_factor"]
         nca_grid_size = [s // scale_factor for s in grid_size]
