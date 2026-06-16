@@ -9,7 +9,6 @@ from models.nca3d import GrowingVNCA
 from models.siren import Siren
 from training.common import (
     TestOptions,
-    autocast_context,
     device_config,
     load_checkpoint_pair,
     load_graft_if_configured,
@@ -21,6 +20,7 @@ from training.common import (
 )
 from training.tasks.base import BaseTask
 from utils.camera import PerspectiveCamera
+from utils.misc import autocast_context
 from utils.video import VideoWriter
 from utils.volumetric_render import RendererRF
 
@@ -50,7 +50,7 @@ class GrowingRFTask(BaseTask):
         load_graft_if_configured(self.config, "nca", model, siren, self.device)
         with torch.no_grad():
             loss_fn = Loss(**self.config["loss"])
-            renderer = RendererRF(**self.config["renderer"])
+            renderer = RendererRF(**self.config["renderer"], precision=precision)
             grid_size = self.config["nca"]["grid_size"]
 
         train_cfg = self.config["train"]
@@ -91,11 +91,9 @@ class GrowingRFTask(BaseTask):
                 camera, view_idx = loss_fn["rf"].get_random_views(train_cfg["num_views"], mode="train")
                 l1l2_sampler_kwargs = copy.copy(self.config["renderer"]["sampler_kwargs"])
                 l1l2_sampler_kwargs["mode"] = "stride"
-                with autocast_context(self.device, precision):
-                    rgb, _, opacity, alpha, sampler = renderer.render(x_render, camera, siren, sampler_kwargs=l1l2_sampler_kwargs)
-                rgb = rgb.to(torch.float32)
-                opacity = opacity.to(torch.float32)
-                alpha = alpha.to(torch.float32)
+                # autocast (fp16) is applied inside renderer.render() around the SIREN call only;
+                # the volumetric integration stays in fp32 for numerical stability.
+                rgb, _, opacity, alpha, sampler = renderer.render(x_render, camera, siren, sampler_kwargs=l1l2_sampler_kwargs)
                 generated = torch.cat([rgb, opacity], dim=2)
                 input_dict = {
                     "generated_images_l1l2": generated,

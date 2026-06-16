@@ -40,7 +40,15 @@ def infer_target_name(config: dict[str, Any]) -> str | None:
     if task == "growing_2d":
         return _stem(loss_config.get("image_loss_kwargs", {}).get("target_path"))
 
-    if task in {"texture_2d", "texture_3d", "meshnca"}:
+    if task == "texture_2d":
+        target_paths = loss_config.get("appearance_loss_kwargs", {}).get("target_images_path")
+        appearance_name = _target_images_name(target_paths)
+        motion_name = None
+        if loss_config.get("motion_loss_weight", 0) > 0:
+            motion_name = _stem(loss_config.get("motion_loss_kwargs", {}).get("target_name"))
+        return "_".join(name for name in [appearance_name, motion_name] if name) or None
+
+    if task in {"texture_3d", "meshnca"}:
         target_paths = loss_config.get("appearance_loss_kwargs", {}).get("target_images_path")
         return _target_images_name(target_paths)
 

@@ -5,6 +5,7 @@ import torch
 from models.siren import Siren
 from utils.mesh import Mesh
 from utils.camera import PerspectiveCamera
+from utils.misc import autocast_context
 from utils.sphere_projection import SphereProjection
 
 def transform_barycoords(barycoords):
@@ -614,17 +615,20 @@ class Renderer:
 
 
 class Renderer2D(Renderer):
-    def __init__(self, scale_factor: int = 8, padding="circular", mode="bilinear", background_color=1.0, **kwargs):
+    def __init__(self, scale_factor: int = 8, padding="circular", mode="bilinear", background_color=1.0,
+                 precision: torch.dtype = torch.float32, **kwargs):
         """
         :param scale_factor: int, size of the patch that will be passed into the siren decoder
         :param padding: str, the padding mode for upsampling. Default is "circular".
         :param mode: str, the interpolation mode to smooth out the cell features. Default is "bilinear".
+        :param precision: torch.dtype, fp16 autocast is applied to the SIREN call when this is torch.float16.
         :param kwargs: Other arguments to be passed to the Renderer constructor.
         """
         super().__init__(**kwargs)
         self.scale_factor = scale_factor
         self.padding = padding
         self.mode = mode
+        self.precision = precision
         self.fs_shader_config['background_color'] = background_color
 
         assert self.fs_shader in ["vanilla", "pbr"], "fs_shader should be either 'vanilla' or 'pbr' for Renderer2D"
@@ -672,7 +676,9 @@ class Renderer2D(Renderer):
                                     self.padding)  # [b, c, h + 2, w + 2]
         x_upscale = torch.nn.functional.interpolate(x, scale_factor=scale_factor, mode="bilinear")
         x_upscale = x_upscale[:, :, scale_factor:-scale_factor, scale_factor:-scale_factor].permute(0, 2, 3, 1)
-        output = siren(x_upscale, coords)  # b, h, w, 3
+        # autocast (fp16) is scoped to the SIREN call only; the shading below stays in fp32.
+        with autocast_context(x_upscale.device, self.precision):
+            output = siren(x_upscale, coords)  # b, h, w, 3
 
         if fs_shader is None:
             fs_shader = self.fs_shader
@@ -705,7 +711,8 @@ class Renderer2D(Renderer):
 
 class Renderer3D(Renderer):
     def __init__(self, ambient_light=0.28, directional_light=1.0, point_light=0.0,
-                 background_color=0.0, vs_shader="raster", fs_shader="vanilla", height_scale=0.03, transform_bary=True):
+                 background_color=0.0, vs_shader="raster", fs_shader="vanilla", height_scale=0.03, transform_bary=True,
+                 precision: torch.dtype = torch.float32):
         """
         :param ambient_light: Intensity of the ambient light
         :param directional_light: Intensity of the directional light
@@ -713,12 +720,15 @@ class Renderer3D(Renderer):
         :param background_color: float, 1.0 is white and 0.0 is black
         :param vs_shader: Vertex Shader mode, either "raster" or "ray"
         :param fs_shader: Fragment Shader mode, either "vanilla" or "simple" or "pbr".
+        :param precision: torch.dtype, fp16 autocast is applied to the SIREN call when this is torch.float16.
+                          Kaolin rasterization always runs in fp32.
         """
         super().__init__(ambient_light, directional_light, point_light, fs_shader)
 
         assert vs_shader in ["raster", "ray"], "vs_shader should be either 'raster' or 'ray'"
         self.vs_shader = vs_shader
         self.height_scale = height_scale
+        self.precision = precision
 
         self.background_color = background_color
         self.fs_shader_config['background_color'] = background_color
@@ -766,7 +776,8 @@ class Renderer3D(Renderer):
                 barycoords[:, :, 0] = 1.0
                 barycoords[:, :, 1] = -1.0
                 barycoords[:, :, 2] = -1.0
-                vertex_height = siren(vertex_features, barycoords)[..., height_channels]  # [batch_size, num_vertices, 1]
+                with autocast_context(vertex_features.device, self.precision):
+                    vertex_height = siren(vertex_features, barycoords)[..., height_channels]  # [batch_size, num_vertices, 1]
                 # print(vertex_height.mean(), vertex_height.std())
 #                 vertex_height = (vertex_height - vertex_height.mean()) * self.height_scale
                 vertex_height = vertex_height * self.height_scale           
@@ -788,7 +799,9 @@ class Renderer3D(Renderer):
             else:
                 barycoords = barycentric_coords
 #             barycoords = (barycentric_coords - 0.5) * 2.0
-            texture_maps = siren(image_features, barycoords)  # [batch_size*num_views, height, width, render_channels]
+            # autocast (fp16) is scoped to the SIREN call only; rasterization/shading stay in fp32.
+            with autocast_context(image_features.device, self.precision):
+                texture_maps = siren(image_features, barycoords)  # [batch_size*num_views, height, width, render_channels]
 
         if fs_shader in ['vanilla', 'simple']:
             _, h, w, c = texture_maps.shape

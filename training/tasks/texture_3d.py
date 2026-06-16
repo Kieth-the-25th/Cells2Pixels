@@ -9,7 +9,6 @@ from models.nca3d import VNCA
 from models.siren import Siren
 from training.common import (
     TestOptions,
-    autocast_context,
     device_config,
     load_checkpoint_pair,
     load_graft_if_configured,
@@ -21,7 +20,7 @@ from training.common import (
 )
 from training.tasks.base import BaseTask
 from utils.camera import PerspectiveCamera
-from utils.misc import process_output_channels
+from utils.misc import autocast_context, process_output_channels
 from utils.video import VideoWriter
 from utils.volumetric_render import RendererRF
 
@@ -53,7 +52,7 @@ class Texture3DTask(BaseTask):
         self.config["loss"]["appearance_loss_kwargs"]["output_channels"] = output_channels
         with torch.no_grad():
             loss_fn = Loss(**self.config["loss"])
-            renderer = RendererRF(**self.config["renderer"])
+            renderer = RendererRF(**self.config["renderer"], precision=precision)
             grid_size = self.config["nca"]["grid_size"]
 
         train_cfg = self.config["train"]
@@ -96,18 +95,14 @@ class Texture3DTask(BaseTask):
                 rgb_sampler_kwargs.update({"mode": "stride", "stride": 1})
                 of_sampler_kwargs.update({"mode": "stride", "stride": 8})
 
-                with autocast_context(self.device, precision):
-                    rgb, depth, opacity, alpha, sampler = renderer.render(x_render, camera, siren, sampler_kwargs=rgb_sampler_kwargs)
-                rgb = rgb.to(torch.float32)
+                # autocast (fp16) is applied inside renderer.render() around the SIREN call only;
+                # the volumetric integration stays in fp32 for numerical stability.
+                rgb, depth, opacity, alpha, sampler = renderer.render(x_render, camera, siren, sampler_kwargs=rgb_sampler_kwargs)
                 rgb = rgb.view(-1, rgb.shape[2], rgb.shape[3], rgb.shape[4])
                 with torch.no_grad():
-                    with autocast_context(self.device, precision):
-                        of_before, _, _, _, _ = renderer.render(x0_render, camera, siren, sampler_kwargs=of_sampler_kwargs, num_samples=64)
-                    of_before = of_before.to(torch.float32)
+                    of_before, _, _, _, _ = renderer.render(x0_render, camera, siren, sampler_kwargs=of_sampler_kwargs, num_samples=64)
                     of_before = of_before.view(-1, of_before.shape[2], of_before.shape[3], of_before.shape[4])
-                with autocast_context(self.device, precision):
-                    of_after, _, _, _, _ = renderer.render(x_render, camera, siren, sampler_kwargs=of_sampler_kwargs, num_samples=64)
-                of_after = of_after.to(torch.float32)
+                of_after, _, _, _, _ = renderer.render(x_render, camera, siren, sampler_kwargs=of_sampler_kwargs, num_samples=64)
                 of_after = of_after.view(-1, of_after.shape[2], of_after.shape[3], of_after.shape[4])
 
                 input_dict = {

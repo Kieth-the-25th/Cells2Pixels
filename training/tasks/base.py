@@ -2,7 +2,7 @@ from pathlib import Path
 
 import torch
 
-from training.common import TestOptions, count_parameters
+from training.common import TestOptions, count_parameters, sanitize_path_component
 
 
 class BaseTask:
@@ -35,7 +35,8 @@ class BaseTask:
         self.logger.log_image(image, key=key, caption=key, step=step)
 
     def _output_dir(self, options: TestOptions) -> Path:
-        output_dir = Path(options.output_dir)
+        exp_name = sanitize_path_component(self.config["experiment_name"])
+        output_dir = Path(options.output_dir) / exp_name
         output_dir.mkdir(parents=True, exist_ok=True)
         return output_dir
 

@@ -9,7 +9,6 @@ from models.nca2d import GrowingNCA, NCA, NoiseNCA, PENCA
 from models.siren import Siren
 from training.common import (
     TestOptions,
-    autocast_context,
     device_config,
     load_checkpoint_pair,
     load_graft_if_configured,
@@ -20,7 +19,7 @@ from training.common import (
     set_seed,
 )
 from training.tasks.base import BaseTask
-from utils.misc import process_output_channels
+from utils.misc import autocast_context, process_output_channels
 from utils.render import Renderer2D
 from utils.video import VideoWriter
 
@@ -55,7 +54,7 @@ class Texture2DTask(BaseTask):
         self.config["loss"]["appearance_loss_kwargs"]["total_channels"] = total_channels
         self.config["loss"]["appearance_loss_kwargs"]["output_channels"] = output_channels
         loss_fn = Loss(**self.config["loss"])
-        renderer = Renderer2D(**self.config["renderer"])
+        renderer = Renderer2D(**self.config["renderer"], precision=precision_from_config(self.config))
         return loss_fn, renderer, tuple(self.config["train"]["nca_grid_size"])
 
     def train(self) -> None:
@@ -88,8 +87,8 @@ class Texture2DTask(BaseTask):
                     for _ in range(step_n):
                         x, z = model(x)
                 x_render = (x if self.config["nca"].get("output_type", "s") == "s" else z).to(torch.float32)
-                with autocast_context(self.device, precision):
-                    rendered = renderer.render(x_render.permute(0, 2, 3, 1), siren, None, fs_shader="vanilla")
+                # autocast (fp16) is applied inside renderer.render() around the SIREN call only.
+                rendered = renderer.render(x_render.permute(0, 2, 3, 1), siren, None, fs_shader="vanilla")
                 rendered = rendered.permute(0, 3, 1, 2).to(torch.float32)
 
                 of_channels = np.random.permutation(model.channels)[:3]
@@ -115,10 +114,8 @@ class Texture2DTask(BaseTask):
                             self._save_logged_image("pbr_output", Renderer2D.to_pil(image), log_step)
                     if "appearance-images" in summary:
                         self._save_logged_image("rendered_images", summary["appearance-images"], log_step)
-                    if "motion-generated_VF" in summary:
-                        self._save_logged_image("generated_vector_field", summary["motion-generated_VF"], log_step)
-                    if log_step == 0 and "motion-target_VF" in summary:
-                        self._save_logged_image("target_vector_field", summary["motion-target_VF"], log_step)
+                    if "motion-summary" in summary:
+                        self._save_logged_image("motion_summary", summary["motion-summary"], log_step)
 
                 if precision == torch.float16:
                     scaler.scale(loss).backward()

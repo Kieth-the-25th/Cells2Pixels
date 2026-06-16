@@ -9,7 +9,6 @@ from models.nca2d import GrowingNCA
 from models.siren import Siren
 from training.common import (
     TestOptions,
-    autocast_context,
     device_config,
     load_checkpoint_pair,
     load_graft_if_configured,
@@ -20,6 +19,7 @@ from training.common import (
     set_seed,
 )
 from training.tasks.base import BaseTask
+from utils.misc import autocast_context
 from utils.render import Renderer2D
 from utils.video import VideoWriter
 
@@ -40,7 +40,7 @@ class Growing2DTask(BaseTask):
 
     def _loss_renderer_grid(self):
         loss_fn = Loss(**self.config["loss"])
-        renderer = Renderer2D(**self.config["renderer"])
+        renderer = Renderer2D(**self.config["renderer"], precision=precision_from_config(self.config))
         grid_size = loss_fn.loss_mapper["image"].grid_size
         grid_size = (grid_size[0] // renderer.scale_factor, grid_size[1] // renderer.scale_factor)
         return loss_fn, renderer, grid_size
@@ -74,8 +74,8 @@ class Growing2DTask(BaseTask):
                         x, z = model(x)
 
                 x_render = (x if self.config["nca"]["output_type"] == "s" else z).to(torch.float32)
-                with autocast_context(self.device, precision):
-                    rendered = renderer.render(x_render.permute(0, 2, 3, 1), siren, None, fs_shader="vanilla")
+                # autocast (fp16) is applied inside renderer.render() around the SIREN call only.
+                rendered = renderer.render(x_render.permute(0, 2, 3, 1), siren, None, fs_shader="vanilla")
                 rendered = rendered.permute(0, 3, 1, 2).to(torch.float32)
                 x_up = torch.nn.functional.interpolate(x.to(torch.float32), scale_factor=renderer.scale_factor, mode="bilinear")
                 living_mask = model.get_living_mask(x_up).float()

@@ -8,6 +8,7 @@ import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
 
+from utils.misc import autocast_context
 from utils.rsh import rsh_functions
 
 
@@ -93,6 +94,7 @@ class RendererRF:
                  sampler_kwargs: dict = None,
                  num_fine_samples: int = 0,
                  sh_degree=0,
+                 precision: torch.dtype = torch.float32,
                  **kwargs,  # Just for backward compatibility, ignore
                  ):
         self.num_samples = num_samples
@@ -111,6 +113,7 @@ class RendererRF:
         self.sampler_kwargs = sampler_kwargs if sampler_kwargs is not None else {}
         self.num_fine_samples = num_fine_samples
         self.sh_degree = sh_degree
+        self.precision = precision
 
         self.rsh_func = rsh_functions[sh_degree]
 
@@ -304,7 +307,9 @@ class RendererRF:
             inside = ((spc >= low) & (spc <= high)).all(dim=-1).unsqueeze(-1)  # (B*num_views, h, w, N, 1)
 
             # 3. neural renderer
-            with torch.autocast(device_type=features.device.type, dtype=torch.float16):
+            # autocast (fp16) is scoped to the SIREN call only; the volumetric integration below
+            # stays in fp32 for numerical stability (exp / cumprod / weighted sums over samples).
+            with autocast_context(features.device, self.precision):
                 raw = siren(features, relative_coords)  # (B*num_views, h, w, N, 4)
 
             sh_coeffs = raw[..., :-1] # (B*num_views, h, w, N, 3*(sh_degree+1)**2)

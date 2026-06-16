@@ -9,7 +9,6 @@ from models.meshnca import MeshNCA
 from models.siren import Siren
 from training.common import (
     TestOptions,
-    autocast_context,
     device_config,
     load_checkpoint_pair,
     load_graft_if_configured,
@@ -22,7 +21,7 @@ from training.common import (
 from training.tasks.base import BaseTask
 from utils.camera import PerspectiveCamera
 from utils.mesh import Mesh
-from utils.misc import process_output_channels
+from utils.misc import autocast_context, process_output_channels
 from utils.render import Renderer3D
 from utils.sphere_projection import SphereProjection
 from utils.video import VideoWriter
@@ -58,8 +57,8 @@ class MeshNCATask(BaseTask):
             self.config["loss"]["appearance_loss_kwargs"]["total_channels"] = total_channels
             self.config["loss"]["appearance_loss_kwargs"]["output_channels"] = output_channels
             loss_fn = Loss(**self.config["loss"])
-            renderer = Renderer3D(**self.config["renderer"])
-            test_renderer = Renderer3D(**self.config["test_renderer"])
+            renderer = Renderer3D(**self.config["renderer"], precision=precision)
+            test_renderer = Renderer3D(**self.config["test_renderer"], precision=precision)
             camera_config = device_config(train_cfg["camera"], self.device)
             projection = SphereProjection(mesh=icosphere, **device_config(train_cfg["projection"], self.device))
 
@@ -77,8 +76,9 @@ class MeshNCATask(BaseTask):
                     x = model(x, icosphere, None)
             x_render = x.to(torch.float32)
             camera = PerspectiveCamera.generate_random_view_cameras(**camera_config)
-            with autocast_context(self.device, precision):
-                rendered = renderer.render(icosphere, x_render, camera, projection, siren)
+            # autocast (fp16) is applied inside renderer.render() around the SIREN call only;
+            # Kaolin rasterization runs in fp32.
+            rendered = renderer.render(icosphere, x_render, camera, projection, siren)
             rendered = torch.flatten(rendered, start_dim=0, end_dim=1).permute(0, 3, 1, 2).to(torch.float32)
             input_dict = {"rendered_images": rendered, "nca_state": x}
             return_summary = epoch % train_cfg["summary_interval"] == 0

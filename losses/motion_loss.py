@@ -6,7 +6,7 @@ import numpy as np
 import os
 import sys
 from models.optic_flow import MSOEmultiscale
-from utils.misc import flow_to_image, plot_vec_field
+from utils.misc import assemble_image_grid, flow_to_image, plot_vec_field
 
 
 class MotionLoss(torch.nn.Module):
@@ -66,7 +66,7 @@ class MotionLoss(torch.nn.Module):
         direction_loss = 1.0 - torch.mean(direction_cos_sim)
         return direction_loss
 
-    def get_opticflow(self, image1, image2, size=(128, 128), return_summary=False, num_steps=1):
+    def get_opticflow(self, image1, image2, size=(128, 128)):
         image1_size = image1.shape[2]
         image2_size = image2.shape[2]
         if image1_size != size[0]:
@@ -84,16 +84,30 @@ class MotionLoss(torch.nn.Module):
         image_cat = torch.stack([x1, x2], dim=-1)
         flow, _ = self.motion_model(image_cat, return_features=True)
 
-        if return_summary:
-            flow_img = flow_to_image(flow[0].permute(1, 2, 0).detach().cpu().numpy()).transpose(2, 0, 1)
-            rescaled_flow = flow * self.base_num_steps / num_steps
-            mean_rescaled_flow = torch.mean(rescaled_flow, dim=0)
-            flow_vector_field = plot_vec_field(mean_rescaled_flow.detach().cpu().numpy(), name='Generated')
-        else:
-            flow_img = None
-            flow_vector_field = None
+        return flow
 
-        return flow, flow_img, flow_vector_field
+    def _build_summary_image(self, optic_flow, num_steps, max_cols=4):
+        """
+        Build a single summary image with two rows and a shared layout:
+          - top row:    vector fields (streamplots)
+          - bottom row: optic flow (color wheel visualization)
+        The first column is the target; the remaining columns (up to
+        ``max_cols``) are the per-image generated results.
+        """
+        rescaled_flow = optic_flow * self.base_num_steps / num_steps
+        num_gen = min(optic_flow.shape[0], max_cols)
+
+        target_vf = self.target_vector_field[0].detach().cpu().numpy()
+        vf_row = [plot_vec_field(target_vf, name='Target')]
+        of_row = [flow_to_image(target_vf.transpose(1, 2, 0))]
+
+        for i in range(num_gen):
+            gen_vf = rescaled_flow[i].detach().cpu().numpy()
+            vf_row.append(plot_vec_field(gen_vf, name=f'Generated {i}'))
+            gen_of = optic_flow[i].permute(1, 2, 0).detach().cpu().numpy()
+            of_row.append(flow_to_image(gen_of))
+
+        return assemble_image_grid([vf_row, of_row])
 
     def forward(self, input_dict, return_summary=True):
         """
@@ -106,11 +120,9 @@ class MotionLoss(torch.nn.Module):
         generated_image_after_nca = input_dict['image_after']
         num_steps = input_dict['step_n']
 
-        optic_flow, flow_img, flow_vector_field = self.get_opticflow(generated_image_before_nca,
-                                                                     generated_image_after_nca,
-                                                                     size=self.image_size,
-                                                                     return_summary=return_summary,
-                                                                     num_steps=num_steps)
+        optic_flow = self.get_opticflow(generated_image_before_nca,
+                                        generated_image_after_nca,
+                                        size=self.image_size)
 
         loss = 0
         loss_log_dict = {}
@@ -124,13 +136,7 @@ class MotionLoss(torch.nn.Module):
 
         summary = None
         if return_summary:
-            summary = {}
-            summary['generated_OF'] = flow_img[None, ...]
-            summary['generated_VF'] = flow_vector_field
-
-            target_flow_vector_field = plot_vec_field(self.target_vector_field[0].detach().cpu().numpy(),
-                                                      name='Target')
-            summary['target_VF'] = target_flow_vector_field
+            summary = {'summary': self._build_summary_image(optic_flow, num_steps)}
 
         return loss, loss_log_dict, summary
 
@@ -198,25 +204,36 @@ def get_motion_vector_field_by_name(motion_vector_field_name, img_size=[128, 128
 
     target_motion_vec = torch.zeros((1, 2, img_size[0], img_size[1]))
 
+    center_x = img_size[0] // 2
+    center_y = img_size[1] // 2
+    torch_pi = torch.FloatTensor([3.1416])
+
+    # Coordinate grids replacing the original double loop:
+    #   i in [-center_x, center_x) maps to row index center_x + i
+    #   j in [-center_y, center_y) maps to col index center_y + j
+    i = torch.arange(-center_x, center_x, dtype=torch.float32)
+    j = torch.arange(-center_y, center_y, dtype=torch.float32)
+    I, J = torch.meshgrid(i, j, indexing="ij")  # [2 * center_x, 2 * center_y]
+
+    radius = torch.sqrt(I ** 2 + J ** 2)
+    nonzero = radius > 0  # the original loops `continue` (leave zeros) at the center cell
+    safe_radius = torch.where(nonzero, radius, torch.ones_like(radius))
+    zeros = torch.zeros_like(I)
+    max_radius = (center_x ** 2 + center_y ** 2) ** 0.5
+
+    rows = slice(0, 2 * center_x)
+    cols = slice(0, 2 * center_y)
+
     if 'grad' in motion_vector_field_name:
         # For example grad_0_180
         # The first degree determines the direction of the motion
         # The second one determines the direction of motion magnitude gradient
-        theta = int(motion_vector_field_name.split("_")[1])
-        phi = int(motion_vector_field_name.split("_")[2])
-        torch_pi = torch.FloatTensor([3.1416])
+        theta = int(motion_vector_field_name.split("_")[1]) / 180.0 * torch_pi
+        phi = int(motion_vector_field_name.split("_")[2]) / 180.0 * torch_pi
 
-        theta = theta / 180.0 * torch_pi
-        phi = phi / 180.0 * torch_pi
-
-        center_x = img_size[0] // 2
-        center_y = img_size[1] // 2
-        for i in range(-center_x, center_x):
-            for j in range(-center_y, center_y):
-                alpha = (j * torch.cos(phi) + i * torch.sin(phi))
-
-                target_motion_vec[0, 0, center_x + i, center_y + j] = alpha
-                target_motion_vec[0, 1, center_x + i, center_y + j] = alpha
+        alpha = J * torch.cos(phi) + I * torch.sin(phi)
+        target_motion_vec[0, 0, rows, cols] = alpha
+        target_motion_vec[0, 1, rows, cols] = alpha
 
         # Adjust the minimum motion strength to 0.2
         target_motion_vec = target_motion_vec - target_motion_vec.min() + 0.2
@@ -225,153 +242,53 @@ def get_motion_vector_field_by_name(motion_vector_field_name, img_size=[128, 128
 
         avg_motion_strength = torch.norm(target_motion_vec, dim=1).mean()
         target_motion_vec = target_motion_vec / avg_motion_strength
+        return target_motion_vec
 
-
-    elif motion_vector_field_name == 'hyperbolic':
-        center_x = img_size[0] // 2
-        center_y = img_size[1] // 2
-        max_radius = (center_x ** 2 + center_y ** 2) ** 0.5
-        for i in range(-center_x, center_x):
-            for j in range(-center_y, center_y):
-                radius = (i ** 2 + j ** 2) ** 0.5
-                if radius == 0:
-                    continue
-                cosine = 4.0 * i / max_radius
-                sine = 4.0 * j / max_radius
-                target_motion_vec[0, 0, center_x + i, center_y + j] = cosine  # sine + pi/2
-                target_motion_vec[0, 1, center_x + i, center_y + j] = sine  # cosine + pi/2
-
-        avg_motion_strength = torch.norm(target_motion_vec, dim=1).mean()
-        target_motion_vec = target_motion_vec / avg_motion_strength
-
+    if motion_vector_field_name == 'hyperbolic':
+        ch0 = 4.0 * I / max_radius
+        ch1 = 4.0 * J / max_radius
+        normalize = True
     elif motion_vector_field_name == 'circular':
-        center_x = img_size[0] // 2
-        center_y = img_size[1] // 2
-        max_radius = (center_x ** 2 + center_y ** 2) ** 0.5
-        for i in range(-center_x, center_x):
-            for j in range(-center_y, center_y):
-                radius = (i ** 2 + j ** 2) ** 0.5
-                if radius == 0:
-                    continue
-                cosine = 4.0 * i / max_radius
-                sine = 4.0 * j / max_radius
-                target_motion_vec[0, 0, center_x + i, center_y + j] = cosine  # sine + pi/2
-                target_motion_vec[0, 1, center_x + i, center_y + j] = -sine  # cosine + pi/2
-
-        avg_motion_strength = torch.norm(target_motion_vec, dim=1).mean()
-        target_motion_vec = target_motion_vec / avg_motion_strength
+        ch0 = 4.0 * I / max_radius
+        ch1 = -4.0 * J / max_radius
+        normalize = True
     elif motion_vector_field_name == 'circle':
-        center_x = img_size[0] // 2
-        center_y = img_size[1] // 2
-        for i in range(-center_x, center_x):
-            for j in range(-center_y, center_y):
-                radius = (i ** 2 + j ** 2) ** 0.5
-                if radius == 0:
-                    continue
-                cosine = i / radius
-                sine = j / radius
-                target_motion_vec[0, 0, center_x + i, center_y + j] = cosine  # sine + pi/2
-                target_motion_vec[0, 1, center_x + i, center_y + j] = -sine  # cosine + pi/2
+        ch0 = torch.where(nonzero, I / safe_radius, zeros)
+        ch1 = torch.where(nonzero, -J / safe_radius, zeros)
+        normalize = False
     elif motion_vector_field_name == 'converge':
-        center_x = img_size[0] // 2
-        center_y = img_size[1] // 2
-        for i in range(-center_x, center_x):
-            for j in range(-center_y, center_y):
-                radius = (i ** 2 + j ** 2) ** 0.5
-                if radius == 0:
-                    continue
-                cosine = i / radius
-                sine = j / radius
-                target_motion_vec[0, 0, center_x + i, center_y + j] = -sine  #
-                target_motion_vec[0, 1, center_x + i, center_y + j] = -cosine  #
+        ch0 = torch.where(nonzero, -J / safe_radius, zeros)
+        ch1 = torch.where(nonzero, -I / safe_radius, zeros)
+        normalize = False
     elif motion_vector_field_name == 'diverge':
-        center_x = img_size[0] // 2
-        center_y = img_size[1] // 2
-        for i in range(-center_x, center_x):
-            for j in range(-center_y, center_y):
-                radius = (i ** 2 + j ** 2) ** 0.5
-                if radius == 0:
-                    continue
-                cosine = i / radius
-                sine = j / radius
-                target_motion_vec[0, 0, center_x + i, center_y + j] = sine  #
-                target_motion_vec[0, 1, center_x + i, center_y + j] = cosine  #
-    elif motion_vector_field_name == '2block_x':
-        center_x = img_size[0] // 2
-        center_y = img_size[1] // 2
-        torch_pi = torch.FloatTensor([3.1416])
-
-        for i in range(-center_x, center_x):
-            for j in range(-center_y, center_y):
-                if i >= 0 and j >= 0:
-                    rad = 0
-                elif i < 0 and j < 0:
-                    rad = 180
-                elif i >= 0 and j < 0:
-                    rad = 0
-                elif i < 0 and j >= 0:
-                    rad = 180
-                motion_rad = rad / 180.0 * torch_pi
-                target_motion_vec[0, 0, center_x + i, center_y + j] = torch.cos(motion_rad)
-                target_motion_vec[0, 1, center_x + i, center_y + j] = torch.sin(motion_rad)
-
-    elif motion_vector_field_name == '2block_y':
-        center_x = img_size[0] // 2
-        center_y = img_size[1] // 2
-        torch_pi = torch.FloatTensor([3.1416])
-
-        for i in range(-center_x, center_x):
-            for j in range(-center_y, center_y):
-                if i >= 0 and j >= 0:
-                    rad = 90
-                elif i < 0 and j < 0:
-                    rad = -90
-                elif i >= 0 and j < 0:
-                    rad = 90
-                elif i < 0 and j >= 0:
-                    rad = -90
-                motion_rad = rad / 180.0 * torch_pi
-                target_motion_vec[0, 0, center_x + i, center_y + j] = torch.cos(motion_rad)
-                target_motion_vec[0, 1, center_x + i, center_y + j] = torch.sin(motion_rad)
-    elif motion_vector_field_name == '3block':
-        center_x = img_size[0] // 2
-        center_y = img_size[1] // 2
-        torch_pi = torch.FloatTensor([3.1416])
-
-        for i in range(-center_x, center_x):
-            for j in range(-center_y, center_y):
-                if i >= 0 and j >= 0:
-                    rad = 0
-                elif i < 0 and j < 0:
-                    rad = 90
-                elif i >= 0 and j < 0:
-                    rad = 0
-                elif i < 0 and j >= 0:
-                    rad = 180
-                motion_rad = rad / 180.0 * torch_pi
-                target_motion_vec[0, 0, center_x + i, center_y + j] = torch.cos(motion_rad)
-                target_motion_vec[0, 1, center_x + i, center_y + j] = torch.sin(motion_rad)
-    elif motion_vector_field_name == '4block':
-        center_x = img_size[0] // 2
-        center_y = img_size[1] // 2
-        torch_pi = torch.FloatTensor([3.1416])
-
-        for i in range(-center_x, center_x):
-            for j in range(-center_y, center_y):
-                if i >= 0 and j >= 0:
-                    rad = 0
-                elif i < 0 and j < 0:
-                    rad = 180
-                elif i >= 0 and j < 0:
-                    rad = 90
-                elif i < 0 and j >= 0:
-                    rad = 270
-                motion_rad = rad / 180.0 * torch_pi
-                target_motion_vec[0, 0, center_x + i, center_y + j] = torch.cos(motion_rad)
-                target_motion_vec[0, 1, center_x + i, center_y + j] = torch.sin(motion_rad)
+        ch0 = torch.where(nonzero, J / safe_radius, zeros)
+        ch1 = torch.where(nonzero, I / safe_radius, zeros)
+        normalize = False
+    elif motion_vector_field_name in ('2block_x', '2block_y', '3block', '4block'):
+        if motion_vector_field_name == '2block_x':
+            rad_deg = torch.where(I >= 0, 0.0, 180.0)
+        elif motion_vector_field_name == '2block_y':
+            rad_deg = torch.where(I >= 0, 90.0, -90.0)
+        elif motion_vector_field_name == '3block':
+            rad_deg = torch.where(I >= 0, 0.0, torch.where(J < 0, 90.0, 180.0))
+        else:  # 4block
+            rad_deg = torch.where(I >= 0,
+                                  torch.where(J >= 0, 0.0, 90.0),
+                                  torch.where(J < 0, 180.0, 270.0))
+        motion_rad = rad_deg / 180.0 * torch_pi
+        ch0 = torch.cos(motion_rad)
+        ch1 = torch.sin(motion_rad)
+        normalize = False
     else:
         print('Not Implemented Motion Field')
         exit()
+
+    target_motion_vec[0, 0, rows, cols] = ch0
+    target_motion_vec[0, 1, rows, cols] = ch1
+
+    if normalize:
+        avg_motion_strength = torch.norm(target_motion_vec, dim=1).mean()
+        target_motion_vec = target_motion_vec / avg_motion_strength
 
     return target_motion_vec
 
@@ -395,4 +312,4 @@ if __name__ == "__main__":
 
         print(loss)
         print(summary)
-        summary["generated_flow_vector_field"].show()
+        summary["summary"].show()

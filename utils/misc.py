@@ -1,3 +1,5 @@
+from contextlib import nullcontext
+
 import torch
 from PIL import Image
 import numpy as np
@@ -16,6 +18,20 @@ def auto_device():
         return torch.device("mps")
     else:
         return torch.device("cpu")
+
+
+def autocast_context(device: torch.device, precision: torch.dtype = torch.float32):
+    """fp16 autocast context, enabled only on CUDA when precision is float16.
+
+    Used both for the NCA rollout in the training tasks and, scoped to the SIREN call,
+    inside the renderers (so rasterization / volumetric integration stay in fp32).
+    Returns a no-op context otherwise, so callers can wrap code unconditionally
+    regardless of the configured precision / device.
+    """
+    enabled = device.type == "cuda" and precision == torch.float16
+    if enabled:
+        return torch.autocast(device_type=device.type, dtype=precision)
+    return nullcontext()
 
 def process_output_channels(num_channels: dict):
     """
@@ -154,6 +170,42 @@ def plot_vec_field(vector_field, name="target", vmin=None, vmax=None):
     img = PIL.Image.open(buf)
 
     return img
+
+
+def assemble_image_grid(grid, cell_size=(256, 256), bg=(255, 255, 255)):
+    """
+    Assemble a 2D list of images into a single grid image.
+
+    Parameters
+    ----------
+    grid : list[list]
+        Rows of cells. Each cell is a PIL.Image, an [H, W, 3] numpy array
+        (uint8, or float in [0, 1]), or None for a blank cell. Rows may have
+        different lengths; the grid width is the longest row.
+    cell_size : (W, H)
+        Size every cell is resized to.
+    bg : RGB background / blank-cell color.
+    """
+
+    def to_pil(cell):
+        if cell is None:
+            return None
+        if isinstance(cell, np.ndarray):
+            if cell.dtype != np.uint8:
+                cell = (cell * 255).clip(0, 255).astype(np.uint8)
+            cell = PIL.Image.fromarray(cell)
+        return cell.convert("RGB").resize(cell_size)
+
+    n_rows = len(grid)
+    n_cols = max(len(row) for row in grid)
+    cw, ch = cell_size
+    canvas = PIL.Image.new("RGB", (n_cols * cw, n_rows * ch), bg)
+    for r, row in enumerate(grid):
+        for c, cell in enumerate(row):
+            pil = to_pil(cell)
+            if pil is not None:
+                canvas.paste(pil, (c * cw, r * ch))
+    return canvas
 
 
 def make_colorwheel():

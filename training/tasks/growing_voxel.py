@@ -7,7 +7,6 @@ from models.nca3d import GrowingVNCA
 from models.siren import Siren
 from training.common import (
     TestOptions,
-    autocast_context,
     device_config,
     load_checkpoint_pair,
     load_graft_if_configured,
@@ -18,6 +17,7 @@ from training.common import (
     set_seed,
 )
 from training.tasks.base import BaseTask
+from utils.misc import autocast_context
 
 
 class GrowingVoxelTask(BaseTask):

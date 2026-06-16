@@ -1,7 +1,6 @@
 import os
 import random
 import shutil
-from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -65,13 +64,6 @@ def device_config(config: dict[str, Any], device: torch.device) -> dict[str, Any
 
 def precision_from_config(config: dict[str, Any]) -> torch.dtype:
     return torch.float32 if config.get("precision", "float32") == "float32" else torch.float16
-
-
-def autocast_context(device: torch.device, precision: torch.dtype):
-    enabled = device.type == "cuda" and precision == torch.float16
-    if enabled:
-        return torch.autocast(device_type=device.type, dtype=precision)
-    return nullcontext()
 
 
 def make_grad_scaler(device: torch.device, precision: torch.dtype):
