@@ -68,7 +68,23 @@ def precision_from_config(config: dict[str, Any]) -> torch.dtype:
 
 def make_grad_scaler(device: torch.device, precision: torch.dtype):
     enabled = device.type == "cuda" and precision == torch.float16
-    return torch.cuda.amp.GradScaler(enabled=enabled)
+    return torch.amp.GradScaler(device.type, enabled=enabled)
+
+
+def optimizer_scheduler_step(optimizer, scheduler, scaler, precision: torch.dtype) -> bool:
+    if precision == torch.float16:
+        scale_before = scaler.get_scale()
+        scaler.step(optimizer)
+        scaler.update()
+        optimizer_stepped = scaler.get_scale() >= scale_before
+    else:
+        optimizer.step()
+        optimizer_stepped = True
+
+    if optimizer_stepped:
+        scheduler.step()
+
+    return optimizer_stepped
 
 
 def count_parameters(model: torch.nn.Module) -> int:

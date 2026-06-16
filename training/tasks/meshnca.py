@@ -14,6 +14,7 @@ from training.common import (
     load_graft_if_configured,
     make_grad_scaler,
     normalize_model_grads,
+    optimizer_scheduler_step,
     precision_from_config,
     save_checkpoint,
     set_seed,
@@ -96,13 +97,8 @@ class MeshNCATask(BaseTask):
                 loss.backward()
             with torch.no_grad():
                 normalize_model_grads(model)
-                if precision == torch.float16:
-                    scaler.step(optimizer)
-                    scaler.update()
-                else:
-                    optimizer.step()
+                optimizer_scheduler_step(optimizer, scheduler, scaler, precision)
                 optimizer.zero_grad()
-                scheduler.step()
                 pool[batch_idx] = x
             self.logger.log_metrics(loss_log, step=epoch)
         save_checkpoint(self.config, model, siren)
@@ -137,4 +133,3 @@ class MeshNCATask(BaseTask):
                     for _ in range(step_n):
                         x = torch.clip(model(x, mesh, None), -1.0, 1.0)
                     camera.rotateY(1.0)
-

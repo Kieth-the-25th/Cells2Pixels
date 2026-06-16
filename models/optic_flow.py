@@ -35,13 +35,13 @@ def tf_consistent_bilinear_upsample(imgs, scale_factor=1.0):
 
     xs = torch.linspace(-1.0 + delta, 1.0 - delta, N - p).to(imgs)
     ys = torch.linspace(-1.0 + delta, 1.0 - delta, N - p).to(imgs)
-    grid = torch.meshgrid(xs, ys)
+    grid = torch.meshgrid(xs, ys, indexing="ij")
     gridy = grid[1]
     gridx = grid[0]
     gridx = torch.nn.functional.pad(gridx.unsqueeze(0), (0, p, 0, p), mode='replicate')[0]
     gridy = torch.nn.functional.pad(gridy.unsqueeze(0), (0, p, 0, p), mode='replicate')[0]
     grid = torch.stack([gridy, gridx], dim=-1).unsqueeze(0).repeat(b, 1, 1, 1)
-    output = torch.nn.functional.grid_sample(imgs, grid, mode='bilinear', padding_mode='zeros')
+    output = torch.nn.functional.grid_sample(imgs, grid, mode='bilinear', padding_mode='zeros', align_corners=False)
 
     return output
 

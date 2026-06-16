@@ -14,6 +14,7 @@ from training.common import (
     load_graft_if_configured,
     make_grad_scaler,
     normalize_model_grads,
+    optimizer_scheduler_step,
     precision_from_config,
     save_checkpoint,
     set_seed,
@@ -139,13 +140,8 @@ class Texture3DTask(BaseTask):
                 if accumulation_counter == accumulation_steps:
                     with torch.no_grad():
                         normalize_model_grads(model)
-                        if precision == torch.float16:
-                            scaler.step(optimizer)
-                            scaler.update()
-                        else:
-                            optimizer.step()
+                        optimizer_scheduler_step(optimizer, scheduler, scaler, precision)
                         optimizer.zero_grad()
-                        scheduler.step()
                         loss_fn.update_loss_weights(loss_log, log_step)
                     accumulation_counter = 0
                     self.logger.log_metrics(loss_log, step=log_step)
@@ -198,4 +194,3 @@ class Texture3DTask(BaseTask):
                     for _ in range(min(4, 2 ** (i // 15))):
                         x, _ = model(x)
                     camera.rotateY(1.0)
-

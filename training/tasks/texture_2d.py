@@ -14,6 +14,7 @@ from training.common import (
     load_graft_if_configured,
     make_grad_scaler,
     normalize_model_grads,
+    optimizer_scheduler_step,
     precision_from_config,
     save_checkpoint,
     set_seed,
@@ -123,13 +124,8 @@ class Texture2DTask(BaseTask):
                     loss.backward()
                 with torch.no_grad():
                     normalize_model_grads(model)
-                    if precision == torch.float16:
-                        scaler.step(optimizer)
-                        scaler.update()
-                    else:
-                        optimizer.step()
+                    optimizer_scheduler_step(optimizer, scheduler, scaler, precision)
                     optimizer.zero_grad()
-                    scheduler.step()
                     pool[batch_idx] = x
                     loss_fn.update_loss_weights(loss_log, log_step)
                 self.logger.log_metrics(loss_log, step=log_step)
@@ -173,4 +169,3 @@ class Texture2DTask(BaseTask):
                     video.add(image)
                     for _ in range(step_n):
                         x, _ = model(x)
-

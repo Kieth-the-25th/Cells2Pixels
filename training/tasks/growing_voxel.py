@@ -12,6 +12,7 @@ from training.common import (
     load_graft_if_configured,
     make_grad_scaler,
     normalize_model_grads,
+    optimizer_scheduler_step,
     precision_from_config,
     save_checkpoint,
     set_seed,
@@ -37,7 +38,7 @@ class GrowingVoxelTask(BaseTask):
     @staticmethod
     def _mgrid(length: int, dim: int, device):
         tensors = tuple(dim * [(torch.arange(length, device=device) / length - 0.5 + 0.5 / length) * 2.0])
-        return torch.stack(torch.meshgrid(*tensors), dim=-1)
+        return torch.stack(torch.meshgrid(*tensors, indexing="ij"), dim=-1)
 
     def _generated_voxel(self, model, siren, x, z, nca_grid_size, scale_factor, precision):
         x_render = x if self.config["nca"]["output_type"] == "s" else z
@@ -101,13 +102,8 @@ class GrowingVoxelTask(BaseTask):
                 if accumulation_counter == accumulation_steps:
                     with torch.no_grad():
                         normalize_model_grads(model)
-                        if precision == torch.float16:
-                            scaler.step(optimizer)
-                            scaler.update()
-                        else:
-                            optimizer.step()
+                        optimizer_scheduler_step(optimizer, scheduler, scaler, precision)
                         optimizer.zero_grad()
-                        scheduler.step()
                     accumulation_counter = 0
                     self.logger.log_metrics(loss_log, step=log_step)
             save_checkpoint(self.config, model, siren, suffix=f"_{repetition + 1}")
@@ -129,4 +125,3 @@ class GrowingVoxelTask(BaseTask):
         _, _, summary = loss_fn({"generated_voxel": generated, "nca_state": x, "alpha": x_up[..., 3:4]}, return_summary=True)
         if "voxel-slice_images" in summary:
             summary["voxel-slice_images"].save(output_dir / f"{self.config['experiment_name']}_test.png")
-

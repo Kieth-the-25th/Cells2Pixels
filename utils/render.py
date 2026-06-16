@@ -532,8 +532,11 @@ class FragmentShader:
         surface_normals = torch.zeros(1, H, W, 3, device=device)
         surface_normals[..., 2] = 1.0
 
-        x, y = torch.meshgrid(torch.linspace(-1.0, 1.0, H, device=device),
-                              torch.linspace(-1.0, 1.0, W, device=device))
+        x, y = torch.meshgrid(
+            torch.linspace(-1.0, 1.0, H, device=device),
+            torch.linspace(-1.0, 1.0, W, device=device),
+            indexing="ij",
+        )
         z = torch.zeros_like(x)
         positions = torch.stack([x, y, z], dim=-1).unsqueeze(0).to(device)
         positions = positions.repeat(b, 1, 1, 1)
@@ -653,7 +656,7 @@ class Renderer2D(Renderer):
             """
             # tensors = tuple(dim * [torch.linspace(-1, 1, steps=L, device=device)])
             tensors = tuple(dim * [(torch.arange(L, device=device) / L - 0.5 + 0.5 / L) * 2.0])
-            mgrid = torch.stack(torch.meshgrid(*tensors), dim=-1)
+            mgrid = torch.stack(torch.meshgrid(*tensors, indexing="ij"), dim=-1)
             if flatten:
                 mgrid = mgrid.reshape(-1, dim)
 
