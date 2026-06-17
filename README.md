@@ -94,5 +94,5 @@ To deploy trained models on the interactive web demos, see [Cells2Pixels/Cells2P
 
 ## TODO
 
-- [ ] Add a Google Colab notebook.
-- [ ] Test the code.
+- [x] Add a Google Colab notebook.
+- [x] Test the code.
