@@ -92,6 +92,8 @@ You can also run simple 2D texture synthesis on `bubbly_0101.jpg` end-to-end in 
 
 To deploy trained models on the interactive web demos, see [Cells2Pixels/Cells2Pixels.github.io](https://github.com/Cells2Pixels/Cells2Pixels.github.io).
 
+[@ekzhang](https://github.com/ekzhang) also implemented the GrowingNCA demo on jax-js: [jax-js.com/nca-growing](https://jax-js.com/nca-growing).
+
 ## TODO
 
 - [x] Add a Google Colab notebook.
