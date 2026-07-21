@@ -1,0 +1,61 @@
+experiment_name: "VolumetricTexture"
+task: "volumetric_texture"
+device: "cuda:0"
+precision: "float16"
+
+nca:
+  type: "VNCA"
+  graft_initialization: null
+  output_type: "s"
+  grid_size: [ 48, 48, 48 ]
+
+  nca_kwargs:
+    channels: 16
+    fc_dim: 128
+    noise_level: 0.0
+    update_prob: 0.5
+    padding: "circular"
+
+siren:
+  hidden_features: 32
+  hidden_layers: 2
+  outermost_linear: True
+  fx: "linear"
+  activation: "sin"
+  num_frequencies: 0
+  first_omega_0: 10.0
+  hidden_omega_0: 10.0
+
+train:
+  epochs: 4000
+  batch_size: 1
+  virtual_batch_size: 4
+  lr: 0.001
+  lr_decay_steps: [ 1000, 2000, 3000 ]
+  lr_decay_gamma: 0.3
+  num_repetitions: 1
+
+  pool_size: 512
+  inject_seed_interval: 32
+  step_range: [ 16, 48 ]
+
+  summary_interval: 100
+
+num_channels:
+  {
+    "rgb": 3
+  }
+
+sh_degree: 0
+
+loss:
+  overflow_loss_weight: 100.0
+  appearance_loss_3d_weight: 2.0
+
+  target_volume_path: "/data/000_flatgrass.npy"
+  target_volume_size: [ 48, 48, 48 ]
+  patch_size: [ 32, 32, 32 ]
+  num_scales: 1
+
+logger:
+  backend: local

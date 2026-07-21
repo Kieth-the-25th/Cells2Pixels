@@ -6,8 +6,10 @@ class Loss(torch.nn.Module):
     def __init__(self, appearance_loss_weight=0.0, overflow_loss_weight=0.0,
                  clip_loss_weight=0.0, motion_loss_weight=0.0,
                  image_loss_weight=0.0, rf_loss_weight=0.0, voxel_loss_weight=0.0,
+                 appearance_loss_3d_weight=0.0,
                  appearance_loss_kwargs=None, motion_loss_kwargs=None,
                  image_loss_kwargs=None, rf_loss_kwargs=None, voxel_loss_kwargs=None,
+                 appearance_loss_3d_kwargs=None,
                  device='cuda:0'):
         super(Loss, self).__init__()
 
@@ -19,13 +21,14 @@ class Loss(torch.nn.Module):
         self.image_loss_weight = image_loss_weight
         self.rf_loss_weight = rf_loss_weight
         self.voxel_loss_weight = voxel_loss_weight
+        self.appearance_loss_3d_weight = appearance_loss_3d_weight
 
         self.appearance_loss_kwargs = {} if appearance_loss_kwargs is None else appearance_loss_kwargs
         self.motion_loss_kwargs = {} if motion_loss_kwargs is None else motion_loss_kwargs
         self.image_loss_kwargs = {} if image_loss_kwargs is None else image_loss_kwargs
         self.rf_loss_kwargs = {} if rf_loss_kwargs is None else rf_loss_kwargs
         self.voxel_loss_kwargs = {} if voxel_loss_kwargs is None else voxel_loss_kwargs
-
+        self.appearance_loss_3d_kwargs = {} if appearance_loss_3d_kwargs is None else appearance_loss_3d_kwargs
 
         self._create_losses()
 
@@ -66,6 +69,11 @@ class Loss(torch.nn.Module):
             from losses.voxel_loss import VoxelLoss
             self.loss_mapper['voxel'] = VoxelLoss(**self._kwargs_with_device(self.voxel_loss_kwargs))
             self.loss_weights['voxel'] = self.voxel_loss_weight
+
+        if self.appearance_loss_3d_weight != 0:
+            from losses.appearance_loss_3d import AppearanceLoss3D
+            self.loss_mapper['appearance_3d'] = AppearanceLoss3D(**self._kwargs_with_device(self.appearance_loss_3d_kwargs))
+            self.loss_weights['appearance_3d'] = self.appearance_loss_3d_weight
 
         self.appearance_loss_history = []
 

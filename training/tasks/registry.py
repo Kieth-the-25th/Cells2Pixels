@@ -4,6 +4,7 @@ from training.tasks.growing_voxel import GrowingVoxelTask
 from training.tasks.meshnca import MeshNCATask
 from training.tasks.texture_2d import Texture2DTask
 from training.tasks.texture_3d import Texture3DTask
+from training.tasks.volumetric_texture import VolumetricTextureTask
 
 
 def get_task(task_name: str, config: dict, logger):
@@ -13,6 +14,7 @@ def get_task(task_name: str, config: dict, logger):
         "growing_rf": GrowingRFTask,
         "growing_voxel": GrowingVoxelTask,
         "texture_3d": Texture3DTask,
+        "volumetric_texture": VolumetricTextureTask,
         "meshnca": MeshNCATask,
     }
     if task_name not in tasks:

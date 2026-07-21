@@ -33,6 +33,7 @@ def create_logger(config: dict):
 
 
 def main():
+    print("Starting")
     args = parse_args()
     config = copy.deepcopy(load_yaml(args.config))
 
