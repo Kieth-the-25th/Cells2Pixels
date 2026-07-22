@@ -49,6 +49,8 @@ num_channels:
 sh_degree: 0
 
 loss:
+  appearance_loss_3d_weight: 2.0
+
   target_volume_path: "/data/000_flatgrass.npy"
   target_volume_size: [ 48, 48, 48 ]
   patch_size: [ 32, 32, 32 ]
