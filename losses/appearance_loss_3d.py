@@ -65,14 +65,16 @@ class AppearanceLoss3D(torch.nn.Module):
         # --- feature backbone: R3D-18 pre-trained on Kinetics ---
         r3d = torchvision.models.video.r3d_18(
             weights=torchvision.models.video.R3D_18_Weights.KINETICS400_V1
-        )
-        # Extract the per-stage modules we need
+        ).to(device).eval()
+        # Extract the per-stage modules we need (keeps eval mode on submodules)
         self.stem = r3d.stem      # Conv3d + BN + ReLU + MaxPool
         self.layer1 = r3d.layer1  # 2 BasicBlocks
         self.layer2 = r3d.layer2
         self.layer3 = r3d.layer3
         self.layer4 = r3d.layer4
         self._stage_modules = [self.layer1, self.layer2, self.layer3, self.layer4]
+        for m in self._stage_modules:
+            m.requires_grad_(False)
 
         self._normalise_mean = torch.tensor(
             [0.43216, 0.394666, 0.37645], device=device
