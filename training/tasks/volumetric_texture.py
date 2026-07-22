@@ -5,6 +5,7 @@ import torch
 from tqdm import tqdm
 
 from losses.loss import Loss
+from losses.appearance_loss import AppearanceLoss
 from models.nca3d import VNCA
 from models.siren import Siren
 from training.common import (
@@ -91,7 +92,7 @@ class VolumetricTextureTask(BaseTask):
         self.config["loss"]["appearance_loss_3d_kwargs"] = {
             "target_volume_path": self.config["loss"].get("target_volume_path"),
             "target_volume_size": self.config["loss"].get(
-                "target_volume_size", [64, 64, 64]
+                "target_volume_size", [48, 48, 48]
             ),
             "patch_size": self.config["loss"].get("patch_size", [32, 32, 32]),
             "num_scales": self.config["loss"].get("num_scales", 1),
@@ -99,7 +100,7 @@ class VolumetricTextureTask(BaseTask):
             "output_channels": output_channels,
         }
         with torch.no_grad():
-            loss_fn = Loss(**device_config(self.config["loss"], self.device))
+            loss_fn = AppearanceLoss(**device_config(self.config["loss"], self.device))
             grid_size = self.config["nca"]["grid_size"]
             D, H, W = grid_size
 

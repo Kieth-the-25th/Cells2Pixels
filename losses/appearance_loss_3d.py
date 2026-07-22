@@ -17,7 +17,7 @@ class AppearanceLoss3D(torch.nn.Module):
     """
 
     def __init__(self,
-                 target_volume_size=(64, 64, 64),
+                 target_volume_size=(48, 48, 48),
                  patch_size=(32, 32, 32),
                  num_scales=1,
                  target_volume_path=None,
