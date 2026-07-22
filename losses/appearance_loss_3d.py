@@ -93,12 +93,14 @@ class AppearanceLoss3D(torch.nn.Module):
 
     def get_r3d_features(self, x, flatten=False):
         """
-        :param x: (B, 3, D, H, W)  normalised input volume.
+        :param x: (B, 3, D, H, W)  raw input volume in [0, 1].
         :param flatten: if True, each returned tensor is (B, C, N) where N=D*H*W.
         :return: list of feature tensors from selected R3D stages.
         """
         B, C, D, H, W = x.shape
         features = []
+
+        x = self.normalise(x)
 
         if self.include_volume_as_feature:
             features.append(x.reshape(B, C, D * H * W) if flatten else x)
@@ -181,7 +183,7 @@ class AppearanceLoss3D(torch.nn.Module):
         :param return_summary: if True, return a PIL summary image.
         :return: ``(loss, loss_log, summary)``
         """
-        rendered = input_dict['rendered_volume']  # (B, C, D, H, W)
+        rendered = input_dict['rendered_volume'].to(self.device)  # (B, C, D, H, W)
         B, C, D, H, W = rendered.shape
         assert C == self.total_channels, \
             f"Expected {self.total_channels} channels, got {C}"
