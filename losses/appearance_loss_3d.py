@@ -20,7 +20,7 @@ class AppearanceLoss3D(torch.nn.Module):
                  target_volume_size=(48, 48, 48),
                  patch_size=(32, 32, 32),
                  num_scales=1,
-                 target_volume_path=None,
+                 target_volume_path="data/000_flatgrass.npy",
                  total_channels=1,
                  output_channels=None,
                  r3d_layers=(1, 2, 3, 4),
