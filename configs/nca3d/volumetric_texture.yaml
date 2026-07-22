@@ -49,7 +49,6 @@ num_channels:
 sh_degree: 0
 
 loss:
-  overflow_loss_weight: 100.0
   appearance_loss_3d_weight: 2.0
 
   target_volume_path: "/data/000_flatgrass.npy"
